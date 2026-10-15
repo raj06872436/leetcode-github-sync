@@ -22,12 +22,12 @@ chrome.webRequest.onCompleted.addListener(
   (details) => {
     if (details.initiator?.startsWith("chrome-extension://")) return; // our own polling
     const match = details.url.match(CHECK_URL);
-    if (match) handleSubmission(match[1]);
+    if (match && details.tabId >= 0) handleSubmission(match[1], details.tabId);
   },
   { urls: ["https://leetcode.com/submissions/detail/*/check/*"] }
 );
 
-async function handleSubmission(id) {
+async function handleSubmission(id, tabId) {
   if (inFlight.has(id)) return;
   inFlight.add(id);
   try {
@@ -43,8 +43,8 @@ async function handleSubmission(id) {
       return;
     }
 
-    const sub = await fetchSubmission(id);
-    const q = await fetchQuestion(sub.question.titleSlug);
+    const sub = await fetchSubmission(tabId, id);
+    const q = await fetchQuestion(tabId, sub.question.titleSlug);
     await pushSolution(cfg, sub, q);
 
     await chrome.storage.local.set({ seen: [...seen, id].slice(-MAX_SEEN) });
@@ -72,25 +72,31 @@ async function waitForResult(id) {
   throw new Error("Timed out waiting for judge result");
 }
 
-async function lcGraphQL(query, variables) {
-  const csrf = await chrome.cookies.get({ url: "https://leetcode.com", name: "csrftoken" });
-  const res = await fetch("https://leetcode.com/graphql/", {
-    method: "POST",
-    credentials: "include",
-    headers: {
-      "content-type": "application/json",
-      ...(csrf ? { "x-csrftoken": csrf.value } : {}),
+// Runs inside the leetcode.com tab so the request carries the page's
+// Origin/Referer; LeetCode's CSRF check rejects calls made from the extension.
+async function lcGraphQL(tabId, query, variables) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    func: async (query, variables) => {
+      const csrf = document.cookie.match(/(?:^|; )csrftoken=([^;]+)/)?.[1];
+      const res = await fetch("/graphql/", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...(csrf ? { "x-csrftoken": csrf } : {}) },
+        body: JSON.stringify({ query, variables }),
+      });
+      return { status: res.status, body: await res.text() };
     },
-    body: JSON.stringify({ query, variables }),
+    args: [query, variables],
   });
-  if (!res.ok) throw new Error(`LeetCode GraphQL failed (${res.status})`);
-  const json = await res.json();
+  if (!result || result.status !== 200) throw new Error(`LeetCode GraphQL failed (${result?.status})`);
+  const json = JSON.parse(result.body);
   if (json.errors?.length) throw new Error(json.errors[0].message);
   return json.data;
 }
 
-async function fetchSubmission(id) {
+async function fetchSubmission(tabId, id) {
   const data = await lcGraphQL(
+    tabId,
     `query submissionDetails($submissionId: Int!) {
       submissionDetails(submissionId: $submissionId) {
         code runtimeDisplay runtimePercentile memoryDisplay memoryPercentile
@@ -104,8 +110,9 @@ async function fetchSubmission(id) {
   return data.submissionDetails;
 }
 
-async function fetchQuestion(titleSlug) {
+async function fetchQuestion(tabId, titleSlug) {
   const data = await lcGraphQL(
+    tabId,
     `query question($titleSlug: String!) {
       question(titleSlug: $titleSlug) {
         questionFrontendId title titleSlug difficulty content
