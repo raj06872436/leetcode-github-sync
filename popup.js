@@ -24,8 +24,8 @@ async function load() {
     $("logs").replaceChildren(
       ...logs.map((l) => {
         const li = document.createElement("li");
-        li.className = l.ok ? "ok" : "err";
-        li.textContent = `${l.ok ? "✓" : "✗"} ${l.title}`;
+        li.className = l.skip ? "" : l.ok ? "ok" : "err";
+        li.textContent = `${l.skip ? "–" : l.ok ? "✓" : "✗"} ${l.title}`;
         const small = document.createElement("small");
         small.textContent = `${new Date(l.time).toLocaleString()} · ${l.msg}`;
         li.append(small);

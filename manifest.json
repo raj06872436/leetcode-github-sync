@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "LeetCode → GitHub Sync",
-  "version": "1.1.0",
+  "version": "1.3.0",
   "description": "Automatically commits your accepted LeetCode solutions to a GitHub repository.",
   "permissions": ["storage", "webRequest", "scripting"],
   "host_permissions": ["https://leetcode.com/*", "https://api.github.com/*"],

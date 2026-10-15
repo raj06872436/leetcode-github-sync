@@ -1,9 +1,11 @@
-// Watches LeetCode's "check submission" requests. When a submission finishes
-// as Accepted, fetches the code + problem info and commits it to GitHub.
-// Detection is based on network requests, not the page DOM, so LeetCode UI
-// redesigns don't break it.
+// Detects LeetCode submissions from network requests (not the page DOM), waits
+// for the judge result, and commits Accepted solutions to GitHub.
+//
+// Trigger: POST /problems/<slug>/submit/ -> poll the latest submission for <slug>
+// until it has a final status. The status is read as text ("Accepted") because
+// LeetCode's numeric status codes are not stable.
 
-const CHECK_URL = /^https:\/\/leetcode\.com\/submissions\/detail\/(\d+)\/check\/?/;
+const SUBMIT_URL = /^https:\/\/leetcode\.com\/problems\/([^/]+)\/submit\/?/;
 const MAX_LOG = 20;
 const MAX_SEEN = 500;
 const inFlight = new Set();
@@ -20,56 +22,106 @@ const EXTENSIONS = {
 
 chrome.webRequest.onCompleted.addListener(
   (details) => {
-    if (details.initiator?.startsWith("chrome-extension://")) return; // our own polling
-    const match = details.url.match(CHECK_URL);
-    if (match && details.tabId >= 0) handleSubmission(match[1], details.tabId);
+    if (details.tabId < 0) return; // not from a tab (e.g. our own requests)
+    const submit = details.method === "POST" && details.url.match(SUBMIT_URL);
+    if (submit) onSubmit(submit[1], details.tabId);
   },
-  { urls: ["https://leetcode.com/submissions/detail/*/check/*"] }
+  { urls: ["https://leetcode.com/*"] }
 );
 
-async function handleSubmission(id, tabId) {
+async function onSubmit(slug, tabId) {
+  const key = `submit:${slug}`;
+  if (inFlight.has(key)) return;
+  inFlight.add(key);
+  const since = Math.floor(Date.now() / 1000) - 10;
+  try {
+    const { id, statusDisplay } = await waitForLatestSubmission(tabId, slug, since);
+    await processSubmission(id, statusDisplay, tabId);
+  } catch (err) {
+    await fail(slug, err);
+  } finally {
+    inFlight.delete(key);
+  }
+}
+
+async function processSubmission(id, statusDisplay, tabId) {
   if (inFlight.has(id)) return;
   inFlight.add(id);
   try {
     const { seen = [] } = await chrome.storage.local.get("seen");
     if (seen.includes(id)) return;
 
-    const result = await waitForResult(id);
-    if (result.status_msg !== "Accepted") return;
-
-    const cfg = await getConfig();
-    if (!cfg) {
-      await log({ title: `Submission ${id}`, ok: false, msg: "Not configured: open the extension popup" });
+    const sub = await waitForCode(tabId, id);
+    const slug = sub.question.titleSlug;
+    if (statusDisplay !== "Accepted") {
+      await markSeen(id);
+      await log({ title: slug, skip: true, msg: `${statusDisplay}: not synced` });
       return;
     }
 
-    const sub = await fetchSubmission(tabId, id);
-    const q = await fetchQuestion(tabId, sub.question.titleSlug);
+    const cfg = await getConfig();
+    if (!cfg) {
+      await log({ title: slug, ok: false, msg: "Not configured: open the extension popup and Save" });
+      return;
+    }
+
+    const q = await fetchQuestion(tabId, slug);
     await pushSolution(cfg, sub, q);
 
-    await chrome.storage.local.set({ seen: [...seen, id].slice(-MAX_SEEN) });
+    await markSeen(id);
     await log({ title: `${q.questionFrontendId}. ${q.title}`, ok: true, msg: `${sub.runtimeDisplay}, ${sub.memoryDisplay}` });
     flashBadge("✓", "#2ea043");
   } catch (err) {
-    console.error(err);
-    await log({ title: `Submission ${id}`, ok: false, msg: String(err.message || err) });
-    flashBadge("!", "#d1242f");
+    await fail(`Submission ${id}`, err);
   } finally {
     inFlight.delete(id);
   }
 }
 
+async function fail(title, err) {
+  console.error(err);
+  await log({ title, ok: false, msg: String(err.message || err) });
+  flashBadge("!", "#d1242f");
+}
+
+async function markSeen(id) {
+  const { seen = [] } = await chrome.storage.local.get("seen");
+  await chrome.storage.local.set({ seen: [...seen, id].slice(-MAX_SEEN) });
+}
+
 // ---------- LeetCode ----------
 
-async function waitForResult(id) {
+// Newest submission for this problem made after `since` (unix seconds),
+// once the judge has finished with it.
+async function waitForLatestSubmission(tabId, slug, since) {
   for (let i = 0; i < 30; i++) {
-    const res = await fetch(`https://leetcode.com/submissions/detail/${id}/check/`, { credentials: "include" });
-    if (!res.ok) throw new Error(`LeetCode check failed (${res.status})`);
-    const data = await res.json();
-    if (data.state === "SUCCESS") return data;
+    const data = await lcGraphQL(
+      tabId,
+      `query submissionList($questionSlug: String!) {
+        questionSubmissionList(offset: 0, limit: 1, questionSlug: $questionSlug) {
+          submissions { id timestamp statusDisplay }
+        }
+      }`,
+      { questionSlug: slug }
+    );
+    const latest = data.questionSubmissionList?.submissions?.[0];
+    const judged = latest?.statusDisplay && !/pending|judging|running/i.test(latest.statusDisplay);
+    if (latest && Number(latest.timestamp) >= since && judged) {
+      return { id: String(latest.id), statusDisplay: latest.statusDisplay };
+    }
     await sleep(1000);
   }
-  throw new Error("Timed out waiting for judge result");
+  throw new Error("Couldn't find the new submission (timed out)");
+}
+
+async function waitForCode(tabId, id) {
+  let lastErr;
+  for (let i = 0; i < 30; i++) {
+    const sub = await fetchSubmission(tabId, id).catch((e) => void (lastErr = e));
+    if (sub?.code) return sub;
+    await sleep(1000);
+  }
+  throw new Error(`Timed out loading submission code${lastErr ? `: ${lastErr.message}` : ""}`);
 }
 
 // Runs inside the leetcode.com tab so the request carries the page's
