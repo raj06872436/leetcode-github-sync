@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body { width: 320px; margin: 0; padding: 14px; font: 13px system-ui, sans-serif; color: #1f2328; }
+    h1 { font-size: 15px; margin: 0 0 12px; }
+    label { display: block; font-weight: 600; margin: 10px 0 4px; }
+    input { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #d0d7de; border-radius: 6px; font: inherit; }
+    .hint { color: #656d76; font-size: 11px; margin-top: 3px; }
+    .row { display: flex; gap: 8px; margin-top: 12px; }
+    button { flex: 1; padding: 7px; border: 1px solid #d0d7de; border-radius: 6px; background: #f6f8fa; cursor: pointer; font: inherit; }
+    button.primary { background: #1f883d; border-color: #1f883d; color: #fff; }
+    #status { margin-top: 8px; min-height: 16px; }
+    .ok { color: #1a7f37; } .err { color: #d1242f; }
+    h2 { font-size: 13px; margin: 16px 0 6px; border-top: 1px solid #d0d7de; padding-top: 10px; }
+    ul { list-style: none; padding: 0; margin: 0; max-height: 180px; overflow-y: auto; }
+    li { padding: 4px 0; border-bottom: 1px solid #eaeef2; }
+    li small { color: #656d76; display: block; }
+  </style>
+</head>
+<body>
+  <h1>LeetCode → GitHub Sync</h1>
+
+  <label for="token">GitHub token</label>
+  <input id="token" type="password" placeholder="github_pat_..." />
+  <div class="hint">Fine-grained token with <b>Contents: Read and write</b> on your repo.</div>
+
+  <label for="repo">Repository</label>
+  <input id="repo" placeholder="username/leetcode" />
+
+  <label for="branch">Branch</label>
+  <input id="branch" placeholder="main" />
+
+  <div class="row">
+    <button id="test">Test connection</button>
+    <button id="save" class="primary">Save</button>
+  </div>
+  <div id="status"></div>
+
+  <h2>Recent syncs</h2>
+  <ul id="logs"><li><small>Nothing yet. Get an Accepted on LeetCode!</small></li></ul>
+
+  <script src="popup.js"></script>
+</body>
+</html>
