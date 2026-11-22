@@ -1,3 +1,5 @@
+<p align="center"><a href="https://github.com/raj06872436"><img src=".github/cover.svg" width="100%" alt="LeetCode GitHub Sync" /></a></p>
+
 # LeetCode → GitHub Sync
 
 A Chrome extension that commits each **Accepted** LeetCode submission to a GitHub repo you choose. Every solve shows up as a commit on your contribution graph.
